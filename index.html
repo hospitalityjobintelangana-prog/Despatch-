@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Daily Food Plan & Dispatch</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#eef1f3;--ink:#17232b;--mut:#5f6f7a;--line:#cdd6dc;--pri:#0f5f5a;--plan:#e3eef9;--act:#fff4d6;--bad:#c0392b;--ok:#1e8449;--card:#fff}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--pri);color:#fff;padding:10px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+header h1{font-size:18px;margin:0;flex:1 1 220px}
+header input[type=date]{padding:6px;border-radius:6px;border:0;font-size:15px}
+.badge{padding:3px 10px;border-radius:12px;font-size:13px;background:#fff3;}
+.badge.ok{background:var(--ok)}
+nav{display:flex;gap:2px;overflow-x:auto;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+nav button{border:0;background:none;padding:12px 16px;font-size:15px;white-space:nowrap;cursor:pointer;color:var(--mut);border-bottom:3px solid transparent}
+nav button.on{color:var(--pri);border-color:var(--pri);font-weight:600}
+main{padding:12px;max-width:1400px;margin:auto}
+.bar{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px;align-items:center}
+button.b{background:var(--pri);color:#fff;border:0;border-radius:6px;padding:9px 13px;font-size:14px;cursor:pointer}
+button.b.alt{background:#fff;color:var(--pri);border:1px solid var(--pri)}
+button.b.red{background:var(--bad)}
+input,select{font:inherit}
+.bar input[type=text],.bar input[type=search]{padding:8px;border:1px solid var(--line);border-radius:6px}
+.wrap{overflow:auto;max-height:70vh;background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:14px}
+table{border-collapse:collapse;width:100%;min-width:640px}
+th,td{border:1px solid var(--line);padding:4px 6px;text-align:left;white-space:nowrap}
+th{background:#dfe7ec;position:sticky;top:0;z-index:2}
+tfoot td,tr.tot td{position:sticky;bottom:0;background:#dfe7ec;font-weight:700}
+td input{width:84px;border:0;background:transparent;padding:6px 2px;text-align:right}
+td input.t{width:140px;text-align:left}
+td input:focus{outline:2px solid var(--pri);background:#fff}
+td.pl{background:var(--plan)} td.ac{background:var(--act)}
+td input.ov{font-weight:700;color:#8a4b00}
+td input.miss{background:#fde0dc}
+.num{text-align:right}
+.over{color:var(--bad);font-weight:700}
+.done{color:var(--ok);font-weight:700}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px}
+.card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px}
+.card b{display:block;font-size:22px}
+.card span{color:var(--mut);font-size:13px}
+.note{color:var(--mut);font-size:13px;margin:4px 0 10px}
+.warn{background:#fdecea;border:1px solid #f0b6ae;padding:8px 10px;border-radius:6px;margin-bottom:10px}
+h2{font-size:17px;margin:14px 0 8px}
+.og{margin-bottom:14px}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:8px;opacity:0;transition:.2s;pointer-events:none;z-index:9}
+#toast.on{opacity:1}
+@media print{header,nav,.bar,.np,#toast{display:none!important}body{background:#fff}.wrap{max-height:none;overflow:visible;border:0}.og{break-after:page}td input{width:auto}main{padding:0}}
+</style></head><body>
+<header><h1>Daily Food Requirement & Dispatch Planner</h1>
+<input type="date" id="dt" onchange="setDate(this.value)"><span class="badge" id="ap"></span></header>
+<nav id="nav"></nav><main id="m"></main><div id="toast"></div>
+<script>
+const KEY='fp_kitchen_v1',uid=()=>Math.random().toString(36).slice(2,8),r2=x=>Math.round(x*100)/100;
+const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const def=()=>({pin:'1234',
+outlets:[['KCC',375],['THLC',null],['Parivar Cafe',null],['Academy',25],['Hari University',250],['Wellness',40],['Gokul Points',null],['Rainbow Restaurant',30],['North School',null],['Packing Labour',null],['Dining Hall',null]].map(([name,pax])=>({id:uid(),name,pax,active:true})),
+items:[['Plain Rice','kg',.15],['Roti','pcs',2],['Butter Milk','L',.2],['Pappu','kg',.05],['Dal','kg',.05],['Subzi','kg',.1],['Curd','kg',.05]].map(([name,unit,pp])=>({id:uid(),name,unit,pp})),days:{}});
+let S;try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+if(!S||!S.outlets)S=def();
+let date=iso(new Date(Date.now()+864e5)),tab='dash',filt='',admin=false;
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast('Could not save: storage is full or blocked')}};
+const D=()=>S.days[date]||(S.days[date]={pax:{},qty:{},ev:[],ok:false,disp:{}});
+const paxOf=o=>{const v=D().pax[o.id];return v===undefined?o.pax:v};
+const qOf=(o,it)=>{const v=(D().qty[o.id]||{})[it.id];return v!==undefined?v:r2((+paxOf(o)||0)*it.pp)};
+const isOv=(o,it)=>((D().qty[o.id]||{})[it.id])!==undefined;
+function rows(){const d=D();
+const a=S.outlets.filter(o=>o.active).map(o=>({k:o.id,name:o.name,pax:+paxOf(o)||0,ev:0,q:Object.fromEntries(S.items.map(it=>[it.id,+qOf(o,it)||0]))}));
+const e=d.ev.map(v=>({k:v.id,name:'Event: '+v.name,pax:+v.guests||0,ev:1,q:Object.fromEntries(S.items.map(it=>[it.id,+(v.qty||{})[it.id]||0]))}));
+return a.concat(e)}
+const tot=r=>S.items.reduce((s,it)=>s+(r.q[it.id]||0),0);
+function lines(){const L=[];rows().forEach(r=>S.items.forEach(it=>{if(r.q[it.id]>0){const k=r.k+'|'+it.id,x=D().disp[k]||{};L.push({k,r,it,pl:r.q[it.id],ac:x.actual===undefined||x.actual===''?null:+x.actual,x})}}));return L}
+function toast(t){const e=document.getElementById('toast');e.textContent=t;e.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('on'),2200)}
+function setDate(v){if(v){date=v;render()}}
+function go(t){tab=t;render()}
+function fmt(n){return r2(n).toLocaleString(undefined,{maximumFractionDigits:2})}
+const TABS=[['dash','Dashboard'],['plan','Food Plan'],['ev','Special Events'],['disp','Dispatch'],['set','Settings']];
+function render(){
+document.getElementById('dt').value=date;
+const a=D().ok,b=document.getElementById('ap');b.textContent=a?'Plan approved':'Draft';b.className='badge'+(a?' ok':'');
+document.getElementById('nav').innerHTML=TABS.map(([k,n])=>`<button class="${tab==k?'on':''}" onclick="go('${k}')">${n}</button>`).join('');
+document.getElementById('m').innerHTML={dash,plan,ev:events,disp,set:settings}[tab]()}
+function bar(extra){return `<div class="bar">${extra||''}</div>`}
+/* ---------- Dashboard ---------- */
+function dash(){const R=rows(),L=lines(),d=D();
+const px=R.filter(r=>!r.ev).reduce((s,r)=>s+r.pax,0),eg=R.filter(r=>r.ev).reduce((s,r)=>s+r.pax,0);
+const pl=L.reduce((s,l)=>s+l.pl,0),ac=L.reduce((s,l)=>s+Math.min(l.ac||0,l.pl),0),pct=pl?Math.round(ac/pl*100):0;
+const over=L.filter(l=>l.ac!==null&&l.ac>l.pl),pend=L.filter(l=>l.x.status!=='Confirmed').length;
+let h=bar(`<button class="b" onclick="go('plan')">Open food plan</button><button class="b alt" onclick="go('disp')">Open dispatch sheet</button><button class="b alt" onclick="exportXlsx()">Export Excel</button>`);
+h+=`<div class="cards"><div class="card"><b>${fmt(px)}</b><span>Outlet PAX</span></div><div class="card"><b>${fmt(eg)}</b><span>Special event guests</span></div><div class="card"><b>${pct}%</b><span>Dispatch completion</span></div><div class="card"><b>${pend}</b><span>Lines not confirmed</span></div><div class="card"><b class="${over.length?'over':''}">${over.length}</b><span>Over-dispatch alerts</span></div></div>`;
+if(over.length)h+=`<div class="warn"><b>Over-dispatch:</b> ${over.map(l=>esc(l.r.name)+' – '+esc(l.it.name)+' (+'+fmt(l.ac-l.pl)+' '+l.it.unit+')').join('; ')}</div>`;
+h+=`<h2>Food item summary</h2>`+itemSummary(L)+`<h2>Outlet summary</h2><div class="wrap"><table><tr><th>Outlet</th><th>PAX</th><th>Total planned</th><th>Total dispatched</th><th>Status</th></tr>`+
+R.map(r=>{const ls=L.filter(l=>l.r.k==r.k),p=ls.reduce((s,l)=>s+l.pl,0),a=ls.reduce((s,l)=>s+(l.ac||0),0),c=ls.length&&ls.every(l=>l.x.status==='Confirmed');return `<tr><td>${esc(r.name)}</td><td class="num">${fmt(r.pax)}</td><td class="num">${fmt(p)}</td><td class="num">${fmt(a)}</td><td class="${c?'done':''}">${c?'Confirmed':ls.length?'Pending':'No items'}</td></tr>`}).join('')+`</table></div><div class="note">Totals add different units together (kg, L, pcs), so use the food item summary for exact quantities.</div>`;
+return h}
+function itemSummary(L){return `<div class="wrap"><table><tr><th>Food item</th><th>Unit</th><th>Planned</th><th>Dispatched</th><th>Balance</th></tr>`+S.items.map(it=>{const ls=L.filter(l=>l.it.id==it.id),p=ls.reduce((s,l)=>s+l.pl,0),a=ls.reduce((s,l)=>s+(l.ac||0),0),b=p-a;return `<tr><td>${esc(it.name)}</td><td>${esc(it.unit)}</td><td class="num pl">${fmt(p)}</td><td class="num ac">${fmt(a)}</td><td class="num ${b<0?'over':''}">${b<0?'OVER '+fmt(-b):fmt(b)}</td></tr>`}).join('')+`</table></div>`}
+/* ---------- Plan ---------- */
+function plan(){const d=D(),R=rows().filter(r=>!filt||r.name.toLowerCase().includes(filt.toLowerCase()));
+let h=bar(`<input type="search" placeholder="Filter outlets" value="${esc(filt)}" onchange="filt=this.value;render()">
+<button class="b alt" onclick="sortPlan()">Sort A–Z</button><button class="b alt" onclick="addOutlet()">Add Outlet</button><button class="b alt" onclick="addItem()">Add Menu Item</button>
+<button class="b alt" onclick="save();toast('Draft saved')">Save Draft</button><button class="b" onclick="approve()">${d.ok?'Re-open plan':'Approve Food Plan'}</button>
+<button class="b alt" onclick="nextDay()">Generate Next-Day Plan</button><button class="b alt" onclick="go('disp')">Open Dispatch Sheet</button>
+<button class="b alt" onclick="exportXlsx()">Export Excel</button><button class="b alt" onclick="pr('plan')">Export PDF</button><button class="b alt" onclick="pr('plan')">Print Production Sheet</button>`);
+h+=`<div class="note">Quantities calculate from PAX × standard per-person amount. Type in any quantity cell to override it (shown bold); clear the cell to go back to automatic. Date: ${esc(date)}</div>`;
+h+=`<div class="wrap"><table><tr><th>Outlet</th><th>PAX</th>${S.items.map(i=>`<th>${esc(i.name)} (${esc(i.unit)})</th>`).join('')}<th>Total</th></tr>`;
+R.forEach(r=>{const o=S.outlets.find(x=>x.id==r.k);
+if(o){const pv=paxOf(o);h+=`<tr><td>${esc(o.name)}</td><td><input type="number" inputmode="numeric" min="0" class="${pv===null||pv===''?'miss':''}" value="${pv??''}" data-a="pax" data-o="${o.id}"></td>`+S.items.map(it=>`<td class="pl"><input type="number" inputmode="decimal" min="0" step="any" class="${isOv(o,it)?'ov':''}" value="${qOf(o,it)}" data-a="qty" data-o="${o.id}" data-i="${it.id}"></td>`).join('')+`<td class="num">${fmt(tot(r))}</td></tr>`}
+else h+=`<tr><td>${esc(r.name)}</td><td class="num">${fmt(r.pax)}</td>`+S.items.map(it=>`<td class="pl num">${fmt(r.q[it.id])}</td>`).join('')+`<td class="num">${fmt(tot(r))}</td></tr>`});
+const all=rows();
+h+=`<tr class="tot"><td>Grand total</td><td class="num">${fmt(all.reduce((s,r)=>s+r.pax,0))}</td>${S.items.map(it=>`<td class="num">${fmt(all.reduce((s,r)=>s+r.q[it.id],0))}</td>`).join('')}<td class="num">${fmt(all.reduce((s,r)=>s+tot(r),0))}</td></tr></table></div>`;
+return h}
+function sortPlan(){S.outlets.sort((a,b)=>a.name.localeCompare(b.name));save();render()}
+function approve(){const d=D();if(d.ok){d.ok=false}else{const miss=S.outlets.filter(o=>o.active&&(paxOf(o)===null||paxOf(o)===''));if(miss.length){toast('Enter PAX for: '+miss.map(o=>o.name).join(', '));return}
+if(!rows().some(r=>tot(r)>0)){toast('Plan has no quantities yet');return}d.ok=true;toast('Food plan approved')}save();render()}
+function nextDay(){const cur=D(),n=new Date(date+'T00:00:00');n.setDate(n.getDate()+1);const nd=iso(n);
+if(S.days[nd]&&!confirm('A plan already exists for '+nd+'. Replace it?'))return;
+S.days[nd]={pax:{...cur.pax},qty:JSON.parse(JSON.stringify(cur.qty)),ev:[],ok:false,disp:{}};date=nd;save();render();toast('Plan copied to '+nd)}
+/* ---------- Events ---------- */
+function events(){const d=D();
+let h=bar(`<button class="b" onclick="addEvent()">Add Event</button>`)+`<div class="note">Events on ${esc(date)} count once in the kitchen total. Add as many events as needed.</div>`;
+if(!d.ev.length)h+=`<div class="card">No events on this date. Choose Add Event to create one.</div>`;
+d.ev.forEach(v=>{h+=`<h2>${esc(v.name)} <button class="b red" onclick="delEvent('${v.id}')">Delete</button></h2><div class="wrap"><table><tr><th>Event name</th><th>Date</th><th>Guests</th>${S.items.map(i=>`<th>${esc(i.name)} (${esc(i.unit)})</th>`).join('')}</tr><tr><td><input class="t" value="${esc(v.name)}" data-a="evn" data-e="${v.id}"></td><td>${esc(date)}</td><td><input type="number" inputmode="numeric" min="0" value="${v.guests??''}" data-a="evg" data-e="${v.id}"></td>${S.items.map(it=>`<td class="pl"><input type="number" inputmode="decimal" min="0" step="any" value="${(v.qty||{})[it.id]??''}" data-a="evq" data-e="${v.id}" data-i="${it.id}"></td>`).join('')}</tr></table></div>`});
+return h}
+function addEvent(){const n=prompt('Event name');if(!n)return;D().ev.push({id:uid(),name:n,guests:null,qty:{}});save();render()}
+function delEvent(id){if(!confirm('Delete this event?'))return;D().ev=D().ev.filter(v=>v.id!=id);save();render()}
+/* ---------- Dispatch ---------- */
+function disp(){const L=lines(),d=D();
+let h=bar(`<button class="b alt" onclick="pr('disp')">Print Outlet-Wise Dispatch Sheet</button><button class="b alt" onclick="pr('disp')">Export PDF</button><button class="b alt" onclick="exportXlsx()">Export Excel</button><button class="b alt" onclick="confirmAll()">Confirm all lines with quantity</button>`);
+if(!d.ok)h+=`<div class="warn">This plan is not approved yet. Planned quantities may still change. Approve it on the Food Plan page.</div>`;
+if(!L.length)return h+`<div class="card">No planned quantities for ${esc(date)}. Fill in the Food Plan first.</div>`;
+h+=`<div class="note">Planned quantities come from the food plan (blue). Enter what you actually sent (yellow).</div>`;
+const by={};L.forEach(l=>(by[l.r.k]=by[l.r.k]||[]).push(l));
+Object.values(by).forEach(ls=>{const r=ls[0].r;
+h+=`<div class="og"><h2>${esc(r.name)} – ${fmt(r.pax)} PAX</h2><div class="wrap"><table><tr><th>Outlet</th><th>PAX</th><th>Food item</th><th>Planned qty</th><th>Actual dispatch qty</th><th>Balance qty</th><th>Time</th><th>Status</th><th>Remarks</th></tr>`+
+ls.map(l=>{const b=l.pl-(l.ac||0),x=l.x;return `<tr><td>${esc(r.name)}</td><td class="num">${fmt(r.pax)}</td><td>${esc(l.it.name)} (${esc(l.it.unit)})</td><td class="pl num">${fmt(l.pl)}</td><td class="ac"><input type="number" inputmode="decimal" min="0" step="any" value="${l.ac??''}" data-a="act" data-k="${l.k}"></td><td class="num ${l.ac!==null&&b<0?'over':''}">${l.ac!==null&&b<0?'OVER '+fmt(-b):fmt(b)}</td><td><input type="time" value="${x.time||''}" data-a="tm" data-k="${l.k}" style="width:110px"></td><td><select data-a="st" data-k="${l.k}"><option>Pending</option><option ${x.status==='Confirmed'?'selected':''}>Confirmed</option></select></td><td><input class="t" value="${esc(x.remarks||'')}" data-a="rm" data-k="${l.k}"></td></tr>`}).join('')+`</table></div></div>`});
+return h+`<h2>Combined summary: planned vs dispatched</h2>`+itemSummary(L)}
+function confirmAll(){lines().forEach(l=>{const x=D().disp[l.k]=D().disp[l.k]||{};if(l.ac!==null){x.status='Confirmed';x.time=x.time||new Date().toTimeString().slice(0,5)}});save();render()}
+/* ---------- Settings ---------- */
+function settings(){
+if(!admin)return `<div class="card" style="max-width:340px"><h2>Administrator access</h2><p class="note">Enter the admin PIN to manage outlets, menu items and quantities.</p><input type="password" id="pin" inputmode="numeric" placeholder="PIN" style="padding:8px;width:100%"> <br><br><button class="b" onclick="login()">Unlock settings</button></div>`;
+return bar(`<button class="b" onclick="addOutlet()">Add Outlet</button><button class="b" onclick="addItem()">Add Menu Item</button><button class="b alt" onclick="admin=false;render()">Lock</button><button class="b alt" onclick="backup()">Backup data (JSON)</button><button class="b alt" onclick="document.getElementById('rf').click()">Restore backup</button><input type="file" id="rf" accept=".json" hidden onchange="restore(this)">`)+
+`<h2>Outlets</h2><div class="wrap"><table><tr><th>Name</th><th>Default PAX</th><th>Active</th><th></th></tr>`+S.outlets.map(o=>`<tr><td><input class="t" value="${esc(o.name)}" data-a="on" data-o="${o.id}"></td><td><input type="number" min="0" value="${o.pax??''}" data-a="op" data-o="${o.id}"></td><td><input type="checkbox" style="width:22px;height:22px" ${o.active?'checked':''} data-a="oa" data-o="${o.id}"></td><td><button class="b red" onclick="delOutlet('${o.id}')">Delete</button></td></tr>`).join('')+`</table></div>
+<div class="note">Default PAX applies to every new day. Change PAX for one day on the Food Plan page.</div>
+<h2>Menu items and standard quantity per person</h2><div class="wrap"><table><tr><th>Item</th><th>Unit</th><th>Qty per person</th><th></th></tr>`+S.items.map(i=>`<tr><td><input class="t" value="${esc(i.name)}" data-a="in" data-i="${i.id}"></td><td><select data-a="iu" data-i="${i.id}">${['kg','grams','L','pcs','portions'].map(u=>`<option ${u==i.unit?'selected':''}>${u}</option>`).join('')}</select></td><td><input type="number" min="0" step="any" value="${i.pp}" data-a="ip" data-i="${i.id}"></td><td><button class="b red" onclick="delItem('${i.id}')">Delete</button></td></tr>`).join('')+`</table></div>
+<h2>Admin PIN</h2><div class="bar"><input type="text" id="np" placeholder="New PIN"><button class="b" onclick="if(np.value){S.pin=np.value;save();toast('PIN changed');np.value=''}">Change PIN</button></div><div class="note">The PIN only stops accidental changes on a shared device. It is stored in this browser, so it is not strong security.</div>`}
+function login(){if(document.getElementById('pin').value===S.pin){admin=true;render()}else toast('Wrong PIN')}
+function addOutlet(){const n=prompt('Outlet name');if(!n)return;S.outlets.push({id:uid(),name:n,pax:null,active:true});save();render()}
+function delOutlet(id){if(confirm('Delete this outlet? Saved plans keep their old data but it will no longer show.')){S.outlets=S.outlets.filter(o=>o.id!=id);save();render()}}
+function addItem(){const n=prompt('Menu item name');if(!n)return;const u=prompt('Unit (kg, grams, L, pcs, portions)','kg')||'kg',p=parseFloat(prompt('Standard quantity per person (0 for manual entry)','0'))||0;S.items.push({id:uid(),name:n,unit:u,pp:p});save();render()}
+function delItem(id){if(confirm('Delete this menu item?')){S.items=S.items.filter(i=>i.id!=id);save();render()}}
+function backup(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(S)],{type:'application/json'}));a.download='food-plan-backup-'+iso(new Date())+'.json';a.click()}
+function restore(f){const r=new FileReader();r.onload=()=>{try{const j=JSON.parse(r.result);if(!j.outlets||!j.items)throw 0;S=j;save();render();toast('Backup restored')}catch(e){toast('That file is not a valid backup')}};r.readAsText(f.files[0])}
+/* ---------- Input handling ---------- */
+document.addEventListener('change',e=>{const t=e.target,a=t.dataset.a;if(!a)return;const d=D(),v=t.value,n=parseFloat(v);
+const bad=()=>{toast('Enter zero or a positive number');render()};
+const o=S.outlets.find(x=>x.id==t.dataset.o),it=S.items.find(x=>x.id==t.dataset.i),ev=d.ev.find(x=>x.id==t.dataset.e),k=t.dataset.k;
+const dk=()=>d.disp[k]=d.disp[k]||{};
+if(a=='pax'){if(v==='')d.pax[o.id]=null;else if(n<0)return bad();else d.pax[o.id]=n}
+else if(a=='qty'){const q=d.qty[o.id]=d.qty[o.id]||{};if(v==='')delete q[it.id];else i
